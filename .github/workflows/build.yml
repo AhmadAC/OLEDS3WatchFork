@@ -28,31 +28,42 @@ jobs:
         import os
         import re
 
-        main_manifest = 'main/idf_component.yml'
-        if os.path.exists(main_manifest):
-            with open(main_manifest, 'r') as f:
-                content = f.read()
+        manifest_path = 'main/idf_component.yml'
+        if os.path.exists(manifest_path):
+            with open(manifest_path, 'r') as f:
+                lines = f.readlines()
             
-            # Convert absolute Windows path with "override_path" to correct relative local "path"
-            content = re.sub(
-                r'override_path:\s*["\']?.*?/components/apps/([^"\']+)["\']?',
-                r'path: "../components/apps/\1"',
-                content
-            )
-            # Also handle backslash windows paths
-            content = re.sub(
-                r'override_path:\s*["\']?.*?\\components\\apps\\([^"\']+)["\']?',
-                r'path: "../components/apps/\1"',
-                content
-            )
-
-            with open(main_manifest, 'w') as f:
-                f.write(content)
+            new_lines = []
+            for line in lines:
+                if 'override_path' in line:
+                    # If this is one of our local apps in components/apps/, make it relative
+                    if 'components/apps/' in line:
+                        new_line = re.sub(
+                            r'override_path:\s*["\']?.*?/components/apps/([^"\']+)["\']?',
+                            r'path: "../components/apps/\1"',
+                            line
+                        )
+                        new_line = re.sub(
+                            r'override_path:\s*["\']?.*?\\components\\apps\\([^"\']+)["\']?',
+                            r'path: "../components/apps/\1"',
+                            new_line
+                        )
+                        new_lines.append(new_line)
+                    else:
+                        # Otherwise (e.g. brookesia_core), discard the line so it downloads from the registry
+                        pass
+                else:
+                    new_lines.append(line)
+                    
+            with open(manifest_path, 'w') as f:
+                f.writelines(new_lines)
             
-            print("Successfully converted main/idf_component.yml to use relative paths:")
-            print(content)
+            # Print the output for verification in workflow logs
+            with open(manifest_path, 'r') as f:
+                print("Successfully updated main/idf_component.yml:")
+                print(f.read())
 
-        # For other idf_component.yml files, just strip override_path entirely
+        # For any other idf_component.yml files in subdirectories, clean out override_path entirely
         for root, dirs, files in os.walk('.'):
             if root == './main' or root == 'main':
                 continue
@@ -64,7 +75,7 @@ jobs:
                     new_lines = [line for line in lines if 'override_path' not in line]
                     with open(filepath, 'w') as f:
                         f.writelines(new_lines)
-                    print(f"Cleaned registry override_path from: {filepath}")
+                    print(f"Cleaned override_path from: {filepath}")
 
     - name: Build with ESP-IDF
       uses: espressif/esp-idf-ci-action@v1
