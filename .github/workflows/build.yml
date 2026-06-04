@@ -122,7 +122,7 @@ jobs:
                             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
                         print(f"Updated {filepath}")
 
-        # 4. Repair CMakeLists.txt and FORCE missing REQUIRES headers (Fixes "fatal error: lvgl.h")
+        # 4. Repair CMakeLists.txt and FORCE missing REQUIRES headers
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file == 'CMakeLists.txt':
@@ -135,7 +135,6 @@ jobs:
                     content = content.replace('brookesia_core', 'esp-brookesia')
                     
                     if 'idf_component_register' in content and 'REQUIRES' in content:
-                        # If component is known to fail due to missing includes, dynamically inject them
                         if any(x in filepath for x in ['esp32_s3_touch_amoled', 'display_manager', 'bsp_extra']):
                             if 'lvgl__lvgl' not in content:
                                 content = re.sub(r'\bREQUIRES\b', 'REQUIRES lvgl__lvgl espressif__esp_lvgl_port ', content)
@@ -159,6 +158,17 @@ jobs:
                 with open(bsp_source, 'w', encoding='utf-8') as f:
                     f.write(content)
                 print(f"Repaired {bsp_source}")
+
+        # 6. Disable GCC 13 mismatched-new-delete error which breaks esp-brookesia v0.3.0
+        root_cmake = 'CMakeLists.txt'
+        if os.path.exists(root_cmake):
+            with open(root_cmake, 'r') as f:
+                content = f.read()
+            if 'mismatched-new-delete' not in content:
+                content += '\nadd_compile_options(-Wno-error=mismatched-new-delete -Wno-mismatched-new-delete)\n'
+                with open(root_cmake, 'w') as f:
+                    f.write(content)
+                print("Added compiler warning overrides to root CMakeLists.txt")
 
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
