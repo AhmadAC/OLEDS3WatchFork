@@ -26,7 +26,7 @@ jobs:
       run: |
         rm -f dependencies.lock
 
-    - name: Remove Calculator App and Transition to Registry esp-brookesia
+    - name: Perform Code and Manifest Repairs
       shell: python
       run: |
         import os
@@ -155,6 +155,23 @@ jobs:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             f.write(content)
                         print(f"Repaired CMakeLists.txt: {filepath}")
+
+        # 5. Fix board support package (BSP) compilation issues with ESP-IDF v5.3.2
+        bsp_source = 'components/esp32_s3_touch_amoled_2_06/esp32_s3_touch_amoled_2_06.c'
+        if os.path.exists(bsp_source):
+            with open(bsp_source, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            original_content = content
+            # Remove '.allow_pd = 0' as the power down flag does not exist in v5.3.x structs
+            content = re.sub(r'\.allow_pd\s*=\s*[^,\n]*,?', '', content)
+            # Replace 'CONFIG_I2C_MASTER_FREQUENCY' with hardcoded 400kHz frequency
+            content = content.replace('CONFIG_I2C_MASTER_FREQUENCY', '400000')
+            
+            if content != original_content:
+                with open(bsp_source, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                print(f"Repaired board support package source file: {bsp_source}")
 
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
