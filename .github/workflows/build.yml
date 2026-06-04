@@ -150,6 +150,9 @@ jobs:
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
 
+    - name: Ensure SPIFFS Directory Exists
+      run: mkdir -p spiffs
+
     - name: Build with ESP-IDF
       uses: espressif/esp-idf-ci-action@v1
       with:
