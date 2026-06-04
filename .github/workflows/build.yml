@@ -166,15 +166,16 @@ jobs:
                 content = f.read()
             
             if 'mismatched-new-delete' not in content:
+                # The content inside this multiline string must be indented to satisfy the YAML block structure
                 injection = """
-# Run dynamically to fix esp-brookesia memory deallocation bug for GCC 13 after download
-execute_process(COMMAND sed -i "s/free(anim);/delete anim;/g" ${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-brookesia/src/core/esp_brookesia_lv.hpp ERROR_QUIET)
+                # Run dynamically to fix esp-brookesia memory deallocation bug for GCC 13 after download
+                execute_process(COMMAND sed -i "s/free(anim);/delete anim;/g" ${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-brookesia/src/core/esp_brookesia_lv.hpp ERROR_QUIET)
 
-# Also formally suppress the warning as a fallback
-if(TARGET __idf_espressif__esp-brookesia)
-    target_compile_options(__idf_espressif__esp-brookesia PRIVATE "-Wno-error=mismatched-new-delete" "-Wno-mismatched-new-delete")
-endif()
-"""
+                # Also formally suppress the warning as a fallback
+                if(TARGET __idf_espressif__esp-brookesia)
+                    target_compile_options(__idf_espressif__esp-brookesia PRIVATE "-Wno-error=mismatched-new-delete" "-Wno-mismatched-new-delete")
+                endif()
+                """
                 # Insert right after project() is fully resolved
                 content = re.sub(r'(project\([^\)]+\))', r'\1' + injection, content)
                 with open(root_cmake, 'w') as f:
