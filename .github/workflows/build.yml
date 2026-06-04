@@ -22,9 +22,49 @@ jobs:
       run: |
         rm -f dependencies.lock
 
-    - name: Remove Local Windows Override Paths
+    - name: Correct Manifest Files
+      shell: python
       run: |
-        find . -name "idf_component.yml" -exec sed -i '/override_path/d' {} +
+        import os
+        import re
+
+        main_manifest = 'main/idf_component.yml'
+        if os.path.exists(main_manifest):
+            with open(main_manifest, 'r') as f:
+                content = f.read()
+            
+            # Convert absolute Windows path with "override_path" to correct relative local "path"
+            content = re.sub(
+                r'override_path:\s*["\']?.*?/components/apps/([^"\']+)["\']?',
+                r'path: "../components/apps/\1"',
+                content
+            )
+            # Also handle backslash windows paths
+            content = re.sub(
+                r'override_path:\s*["\']?.*?\\components\\apps\\([^"\']+)["\']?',
+                r'path: "../components/apps/\1"',
+                content
+            )
+
+            with open(main_manifest, 'w') as f:
+                f.write(content)
+            
+            print("Successfully converted main/idf_component.yml to use relative paths:")
+            print(content)
+
+        # For other idf_component.yml files, just strip override_path entirely
+        for root, dirs, files in os.walk('.'):
+            if root == './main' or root == 'main':
+                continue
+            for file in files:
+                if file == 'idf_component.yml':
+                    filepath = os.path.join(root, file)
+                    with open(filepath, 'r') as f:
+                        lines = f.readlines()
+                    new_lines = [line for line in lines if 'override_path' not in line]
+                    with open(filepath, 'w') as f:
+                        f.writelines(new_lines)
+                    print(f"Cleaned registry override_path from: {filepath}")
 
     - name: Build with ESP-IDF
       uses: espressif/esp-idf-ci-action@v1
