@@ -93,7 +93,7 @@ jobs:
                             dependencies.pop(key)
                             modified = True
                     
-                    # Replace custom brookesia_core with official esp-brookesia v0.3.0
+                    # Replace custom brookesia_core with official esp-brookesia v0.4.0 (for LVGL 8 / user namespaces)
                     keys_to_remove = []
                     for key in list(dependencies.keys()):
                         if key in ['brookesia_core', 'espressif/brookesia_core']:
@@ -102,7 +102,12 @@ jobs:
                     if keys_to_remove:
                         for key in keys_to_remove:
                             dependencies.pop(key)
-                        dependencies['espressif/esp-brookesia'] = '~0.3.0'
+                        dependencies['espressif/esp-brookesia'] = '~0.4.0'
+                        modified = True
+                    
+                    # Ensure esp-lib-utils is explicitly downloaded since v0.4.0 doesn't bundle it automatically
+                    if 'main/idf_component.yml' in filepath or filepath.endswith('main/idf_component.yml'):
+                        dependencies['espressif/esp-lib-utils'] = '^0.2.0'
                         modified = True
                     
                     # Maintain LVGL configuration but allow the registry to auto-resolve matching version (*)
@@ -138,6 +143,11 @@ jobs:
                         if any(x in filepath for x in ['esp32_s3_touch_amoled', 'display_manager', 'bsp_extra']):
                             if 'lvgl__lvgl' not in content:
                                 content = re.sub(r'\bREQUIRES\b', 'REQUIRES lvgl__lvgl espressif__esp_lvgl_port ', content)
+                        
+                        # Fix app_notifications requirements to link downloaded esp-lib-utils
+                        if 'app_notifications' in filepath:
+                            if 'espressif__esp-lib-utils' not in content:
+                                content = re.sub(r'\bREQUIRES\b', 'REQUIRES espressif__esp-lib-utils ', content)
                     
                     if content != original_content:
                         with open(filepath, 'w', encoding='utf-8') as f:
@@ -171,9 +181,9 @@ jobs:
                 # Run dynamically to fix esp-brookesia memory deallocation bug for GCC 13 after download
                 execute_process(COMMAND sed -i "s/free(anim);/delete anim;/g" ${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-brookesia/src/core/esp_brookesia_lv.hpp ERROR_QUIET)
 
-                # Also formally suppress the warning as a fallback
+                # Also formally suppress the warning as a fallback (limited to CXX compiler so C files do not warn)
                 if(TARGET __idf_espressif__esp-brookesia)
-                    target_compile_options(__idf_espressif__esp-brookesia PRIVATE "-Wno-error=mismatched-new-delete" "-Wno-mismatched-new-delete")
+                    target_compile_options(__idf_espressif__esp-brookesia PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=mismatched-new-delete>" "$<$<COMPILE_LANGUAGE:CXX>:-Wno-mismatched-new-delete>")
                 endif()
                 """
                 # Insert right after project() is fully resolved
@@ -181,6 +191,26 @@ jobs:
                 with open(root_cmake, 'w') as f:
                     f.write(content)
                 print("Injected dynamic patch commands into root CMakeLists.txt")
+
+        # 7. Convert potential LVGL 9 image assets back to LVGL 8 structures (Fixes notifications asset)
+        for root, dirs, files in os.walk('components/apps'):
+            for file in files:
+                if file.endswith('.c') or file.endswith('.h'):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    except UnicodeDecodeError:
+                        continue
+                        
+                    if 'lv_image_dsc_t' in content or 'LV_COLOR_FORMAT_ARGB8888' in content:
+                        content = content.replace('lv_image_dsc_t', 'lv_img_dsc_t')
+                        content = content.replace('LV_COLOR_FORMAT_ARGB8888', 'LV_IMG_CF_TRUE_COLOR_ALPHA')
+                        content = re.sub(r'\.header\.magic\s*=\s*[^,\n]*,?', '', content)
+                        
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        print(f"Converted asset {filepath} to LVGL 8 structure")
 
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
