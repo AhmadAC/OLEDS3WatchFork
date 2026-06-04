@@ -19,61 +19,42 @@ jobs:
         rm -rf components/esp32_s3_touch_amoled_2_06
         git clone https://github.com/joaquimorg/esp32_s3_touch_amoled_2_06.git components/esp32_s3_touch_amoled_2_06
         
-        # Clone the missing UI Framework
+        # Clone the missing UI Framework WITH internal submodules!
         rm -rf esp-brookesia
-        git clone https://github.com/espressif/esp-brookesia.git esp-brookesia
+        git clone --recursive https://github.com/espressif/esp-brookesia.git esp-brookesia
 
     - name: Remove Outdated Lock File
       run: |
         rm -f dependencies.lock
 
-    - name: Correct Manifest Files
+    - name: Correct Hardcoded Windows Paths
       shell: python
       run: |
         import os
+        import glob
 
-        manifest_path = 'main/idf_component.yml'
-        if os.path.exists(manifest_path):
-            with open(manifest_path, 'r') as f:
-                lines = f.readlines()
-            
-            new_lines = []
-            for line in lines:
-                if 'override_path' in line:
-                    normalized = line.replace('\\', '/')
-                    # Map local smartwatch apps to relative paths
-                    if 'components/apps/' in normalized:
-                        app_name = normalized.split('components/apps/')[-1].strip().strip('"').strip("'")
-                        new_lines.append(f'    path: "../components/apps/{app_name}"\n')
-                    # Map the missing UI framework to the newly cloned repository folder
-                    elif 'brookesia_core' in normalized:
-                        new_lines.append('    path: "../esp-brookesia/core/brookesia_core"\n')
-                    # Strip any other absolute paths
-                    else:
-                        pass
-                else:
-                    new_lines.append(line)
-                    
-            with open(manifest_path, 'w') as f:
-                f.writelines(new_lines)
-            
-            with open(manifest_path, 'r') as f:
-                print("Successfully mapped paths in main/idf_component.yml:")
-                print(f.read())
+        # Get the current Linux runner workspace path
+        workspace = os.environ['GITHUB_WORKSPACE'].replace('\\', '/')
+        win_path1 = 'D:/Work/ESP32-S3-Touch-AMOLED'
+        win_path2 = 'D:\\Work\\ESP32-S3-Touch-AMOLED'
 
-        # Clean out absolute paths from internal sub-components
-        for root, dirs, files in os.walk('.'):
-            if root == '.' or './main' in root or 'main' in root:
-                continue
-            for file in files:
-                if file == 'idf_component.yml':
-                    filepath = os.path.join(root, file)
-                    with open(filepath, 'r') as f:
-                        lines = f.readlines()
-                    new_lines = [line for line in lines if 'override_path' not in line]
-                    with open(filepath, 'w') as f:
-                        f.writelines(new_lines)
-                    print(f"Cleaned absolute paths from: {filepath}")
+        # Safely find and replace the Windows path in all manifest files
+        for filepath in glob.glob('**/idf_component.yml', recursive=True):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            modified = False
+            if win_path1 in content:
+                content = content.replace(win_path1, workspace)
+                modified = True
+            if win_path2 in content:
+                content = content.replace(win_path2, workspace)
+                modified = True
+                
+            if modified:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                print(f"Fixed absolute Windows path in: {filepath}")
 
     - name: Build with ESP-IDF
       uses: espressif/esp-idf-ci-action@v1
