@@ -159,16 +159,27 @@ jobs:
                     f.write(content)
                 print(f"Repaired {bsp_source}")
 
-        # 6. Disable GCC 13 mismatched-new-delete error which breaks esp-brookesia v0.3.0
+        # 6. Dynamically patch esp-brookesia mismatched-new-delete bug during CMake execution
         root_cmake = 'CMakeLists.txt'
         if os.path.exists(root_cmake):
             with open(root_cmake, 'r') as f:
                 content = f.read()
+            
             if 'mismatched-new-delete' not in content:
-                content += '\nadd_compile_options(-Wno-error=mismatched-new-delete -Wno-mismatched-new-delete)\n'
+                injection = """
+# Run dynamically to fix esp-brookesia memory deallocation bug for GCC 13 after download
+execute_process(COMMAND sed -i "s/free(anim);/delete anim;/g" ${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-brookesia/src/core/esp_brookesia_lv.hpp ERROR_QUIET)
+
+# Also formally suppress the warning as a fallback
+if(TARGET __idf_espressif__esp-brookesia)
+    target_compile_options(__idf_espressif__esp-brookesia PRIVATE "-Wno-error=mismatched-new-delete" "-Wno-mismatched-new-delete")
+endif()
+"""
+                # Insert right after project() is fully resolved
+                content = re.sub(r'(project\([^\)]+\))', r'\1' + injection, content)
                 with open(root_cmake, 'w') as f:
                     f.write(content)
-                print("Added compiler warning overrides to root CMakeLists.txt")
+                print("Injected dynamic patch commands into root CMakeLists.txt")
 
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
