@@ -39,7 +39,6 @@ jobs:
             with open(main_cpp, 'r', encoding='utf-8') as f:
                 cpp_code = f.read()
             
-            # Remove "Calculator" from the ordered_app_names vector
             cpp_code = cpp_code.replace('"Calculator", ', '')
             cpp_code = cpp_code.replace(', "Calculator"', '')
             cpp_code = cpp_code.replace('"Calculator"', '')
@@ -48,7 +47,7 @@ jobs:
                 f.write(cpp_code)
             print("Removed Calculator from main.cpp")
 
-        # 2. Fix boost thread references in all C++ files (legacy esp-brookesia provided this)
+        # 2. Replace boost thread usage with standard C++ std::thread
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file.endswith('.cpp') or file.endswith('.h') or file.endswith('.hpp'):
@@ -70,32 +69,7 @@ jobs:
                             f.write(content)
                         print(f"Replaced boost::thread with std::thread in {filepath}")
 
-        # 3. Remove the calculator dependency from the main manifest
-        main_manifest = 'main/idf_component.yml'
-        if os.path.exists(main_manifest):
-            with open(main_manifest, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            
-            new_lines = []
-            skip = False
-            for line in lines:
-                if line.strip().startswith('brookesia_app_calculator'):
-                    skip = True
-                    continue
-                if skip:
-                    if line.startswith('  ') or line.strip() == '':
-                        continue
-                    else:
-                        skip = False
-                if not skip:
-                    new_lines.append(line)
-                    
-            with open(main_manifest, 'w', encoding='utf-8') as f:
-                f.writelines(new_lines)
-            print("Removed Calculator from main/idf_component.yml")
-
-        # 4. Transition from custom brookesia_core to official espressif/esp-brookesia component (~0.3.0)
-        # Using ~0.3.0 retains the C++ API structure needed for the watch UI (and forces LVGL 8.x)
+        # 3. Clean up components and fix registry dependencies
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file == 'idf_component.yml':
@@ -113,7 +87,13 @@ jobs:
                     dependencies = data['dependencies']
                     modified = False
                     
-                    # Identify obsolete brookesia_core references
+                    # Remove calculator app
+                    for key in list(dependencies.keys()):
+                        if 'brookesia_app_calculator' in key:
+                            dependencies.pop(key)
+                            modified = True
+                    
+                    # Replace custom brookesia_core with official esp-brookesia v0.3.0
                     keys_to_remove = []
                     for key in list(dependencies.keys()):
                         if key in ['brookesia_core', 'espressif/brookesia_core']:
@@ -122,44 +102,27 @@ jobs:
                     if keys_to_remove:
                         for key in keys_to_remove:
                             dependencies.pop(key)
-                        
-                        # Add the registry-backed esp-brookesia package (locked to 0.3.0)
                         dependencies['espressif/esp-brookesia'] = '~0.3.0'
                         modified = True
                     
-                    # Remove forced lvgl/esp_lvgl_port to allow esp-brookesia v0.3.0 to resolve matching LVGL 8 libraries
-                    for dep_name in ['espressif/esp_lvgl_port', 'lvgl/lvgl']:
+                    # Maintain LVGL configuration but allow the registry to auto-resolve matching version (*)
+                    for dep_name in ['espressif/esp_lvgl_port', 'lvgl/lvgl', 'lvgl']:
                         if dep_name in dependencies:
-                            dependencies.pop(dep_name)
+                            if isinstance(dependencies[dep_name], dict):
+                                dependencies[dep_name]['version'] = "*"
+                                for pk in ['path', 'override_path']:
+                                    if pk in dependencies[dep_name]:
+                                        dependencies[dep_name].pop(pk)
+                            else:
+                                dependencies[dep_name] = "*"
                             modified = True
-                        
-                    # Clean up other local override paths that are broken
-                    for dep_name, dep_info in list(dependencies.items()):
-                        if isinstance(dep_info, dict):
-                            for path_key in ['path', 'override_path']:
-                                if path_key in dep_info:
-                                    path_val = dep_info[path_key]
-                                    path_val_norm = path_val.replace('\\', '/')
-                                    if os.path.isabs(path_val_norm):
-                                        full_path = path_val_norm
-                                    else:
-                                        full_path = os.path.abspath(os.path.join(root, path_val_norm))
-                                    
-                                    if not os.path.isdir(full_path):
-                                        print(f"[{filepath}] Removing broken {path_key} for {dep_name}: {path_val}")
-                                        dep_info.pop(path_key)
-                                        modified = True
-                                    else:
-                                        if dep_info[path_key] != path_val_norm:
-                                            dep_info[path_key] = path_val_norm
-                                            modified = True
                     
                     if modified:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-                        print(f"Transitioned manifest {filepath} to official espressif/esp-brookesia component (~0.3.0)")
+                        print(f"Updated {filepath}")
 
-        # 5. Update CMakeLists.txt to require esp-brookesia instead of brookesia_core
+        # 4. Repair CMakeLists.txt and FORCE missing REQUIRES headers (Fixes "fatal error: lvgl.h")
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file == 'CMakeLists.txt':
@@ -171,27 +134,31 @@ jobs:
                     content = content.replace('espressif__brookesia_core', 'espressif__esp-brookesia')
                     content = content.replace('brookesia_core', 'esp-brookesia')
                     
+                    if 'idf_component_register' in content and 'REQUIRES' in content:
+                        # If component is known to fail due to missing includes, dynamically inject them
+                        if any(x in filepath for x in ['esp32_s3_touch_amoled', 'display_manager', 'bsp_extra']):
+                            if 'lvgl__lvgl' not in content:
+                                content = re.sub(r'\bREQUIRES\b', 'REQUIRES lvgl__lvgl espressif__esp_lvgl_port ', content)
+                    
                     if content != original_content:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             f.write(content)
-                        print(f"Repaired CMakeLists.txt: {filepath}")
+                        print(f"Repaired REQUIRES in {filepath}")
 
-        # 6. Fix board support package (BSP) compilation issues with ESP-IDF v5.3.2
+        # 5. Fix board support package (BSP) powerdown structure error
         bsp_source = 'components/esp32_s3_touch_amoled_2_06/esp32_s3_touch_amoled_2_06.c'
         if os.path.exists(bsp_source):
             with open(bsp_source, 'r', encoding='utf-8') as f:
                 content = f.read()
             
             original_content = content
-            # Remove '.allow_pd = 0' as the power down flag does not exist in v5.3.x structs
             content = re.sub(r'\.allow_pd\s*=\s*[^,\n]*,?', '', content)
-            # Replace 'CONFIG_I2C_MASTER_FREQUENCY' with hardcoded 400kHz frequency
             content = content.replace('CONFIG_I2C_MASTER_FREQUENCY', '400000')
             
             if content != original_content:
                 with open(bsp_source, 'w', encoding='utf-8') as f:
                     f.write(content)
-                print(f"Repaired board support package source file: {bsp_source}")
+                print(f"Repaired {bsp_source}")
 
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
