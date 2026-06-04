@@ -48,7 +48,29 @@ jobs:
                 f.write(cpp_code)
             print("Removed Calculator from main.cpp")
 
-        # 2. Remove the calculator dependency from the main manifest
+        # 2. Fix boost thread references in all C++ files (legacy esp-brookesia provided this)
+        for root, dirs, files in os.walk('.'):
+            for file in files:
+                if file.endswith('.cpp') or file.endswith('.h') or file.endswith('.hpp'):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    except UnicodeDecodeError:
+                        continue
+                        
+                    if 'boost::thread' in content or 'boost::this_thread' in content:
+                        content = content.replace('boost::thread', 'std::thread')
+                        content = content.replace('boost::this_thread::sleep_for', 'std::this_thread::sleep_for')
+                        content = content.replace('boost::chrono', 'std::chrono')
+                        if '#include <thread>' not in content and file.endswith('.cpp'):
+                            content = '#include <thread>\n' + content
+                            
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        print(f"Replaced boost::thread with std::thread in {filepath}")
+
+        # 3. Remove the calculator dependency from the main manifest
         main_manifest = 'main/idf_component.yml'
         if os.path.exists(main_manifest):
             with open(main_manifest, 'r', encoding='utf-8') as f:
@@ -72,7 +94,8 @@ jobs:
                 f.writelines(new_lines)
             print("Removed Calculator from main/idf_component.yml")
 
-        # 3. Transition from custom brookesia_core to official espressif/esp-brookesia component
+        # 4. Transition from custom brookesia_core to official espressif/esp-brookesia component (~0.3.0)
+        # Using ~0.3.0 retains the C++ API structure needed for the watch UI (and forces LVGL 8.x)
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file == 'idf_component.yml':
@@ -100,18 +123,15 @@ jobs:
                         for key in keys_to_remove:
                             dependencies.pop(key)
                         
-                        # Add the clean registry-backed esp-brookesia package (version >= 0.5.0 which supports LVGL 9.2)
-                        dependencies['espressif/esp-brookesia'] = '^0.5.0'
+                        # Add the registry-backed esp-brookesia package (locked to 0.3.0)
+                        dependencies['espressif/esp-brookesia'] = '~0.3.0'
                         modified = True
                     
-                    # Lock espressif/esp_lvgl_port to ~2.3.0 to preserve compatibility with LVGL 9.2
-                    if 'espressif/esp_lvgl_port' in dependencies:
-                        dep_info = dependencies['espressif/esp_lvgl_port']
-                        if isinstance(dep_info, dict):
-                            dep_info['version'] = '~2.3.0'
-                        else:
-                            dependencies['espressif/esp_lvgl_port'] = '~2.3.0'
-                        modified = True
+                    # Remove forced lvgl/esp_lvgl_port to allow esp-brookesia v0.3.0 to resolve matching LVGL 8 libraries
+                    for dep_name in ['espressif/esp_lvgl_port', 'lvgl/lvgl']:
+                        if dep_name in dependencies:
+                            dependencies.pop(dep_name)
+                            modified = True
                         
                     # Clean up other local override paths that are broken
                     for dep_name, dep_info in list(dependencies.items()):
@@ -137,9 +157,9 @@ jobs:
                     if modified:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-                        print(f"Transitioned manifest {filepath} to official espressif/esp-brookesia component")
+                        print(f"Transitioned manifest {filepath} to official espressif/esp-brookesia component (~0.3.0)")
 
-        # 4. Update CMakeLists.txt to require esp-brookesia instead of brookesia_core
+        # 5. Update CMakeLists.txt to require esp-brookesia instead of brookesia_core
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file == 'CMakeLists.txt':
@@ -156,7 +176,7 @@ jobs:
                             f.write(content)
                         print(f"Repaired CMakeLists.txt: {filepath}")
 
-        # 5. Fix board support package (BSP) compilation issues with ESP-IDF v5.3.2
+        # 6. Fix board support package (BSP) compilation issues with ESP-IDF v5.3.2
         bsp_source = 'components/esp32_s3_touch_amoled_2_06/esp32_s3_touch_amoled_2_06.c'
         if os.path.exists(bsp_source):
             with open(bsp_source, 'r', encoding='utf-8') as f:
@@ -172,43 +192,6 @@ jobs:
                 with open(bsp_source, 'w', encoding='utf-8') as f:
                     f.write(content)
                 print(f"Repaired board support package source file: {bsp_source}")
-
-        # 6. Fix header include paths for esp-brookesia v0.5.0 restructuring
-        for root, dirs, files in os.walk('.'):
-            for file in files:
-                if file.endswith('.h') or file.endswith('.hpp') or file.endswith('.cpp'):
-                    filepath = os.path.join(root, file)
-                    try:
-                        with open(filepath, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                    except UnicodeDecodeError:
-                        continue
-                    
-                    modified = False
-                    
-                    # Update obsolete base context include to the new core structure
-                    if 'systems/base/esp_brookesia_base_context.hpp' in content:
-                        content = content.replace('systems/base/esp_brookesia_base_context.hpp', 'systems/core/esp_brookesia_core.hpp')
-                        modified = True
-                        
-                    # Update other potential obsolete base headers
-                    if 'systems/base/esp_brookesia_base_type.hpp' in content:
-                        content = content.replace('systems/base/esp_brookesia_base_type.hpp', 'systems/core/esp_brookesia_core_type.hpp')
-                        modified = True
-                        
-                    if 'systems/base/esp_brookesia_base_app.hpp' in content:
-                        content = content.replace('systems/base/esp_brookesia_base_app.hpp', 'systems/core/esp_brookesia_core_app.hpp')
-                        modified = True
-                        
-                    # Update BaseContext class name changes
-                    if 'EspBrookesiaBaseContext' in content:
-                        content = content.replace('EspBrookesiaBaseContext', 'EspBrookesiaCore')
-                        modified = True
-
-                    if modified:
-                        with open(filepath, 'w', encoding='utf-8') as f:
-                            f.write(content)
-                        print(f"Fixed legacy brookesia header includes in {filepath}")
 
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
