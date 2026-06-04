@@ -15,29 +15,23 @@ jobs:
 
     - name: Clone Dependencies Manually
       run: |
-        # Clone the required board support package
+        # Clone only the custom board support package (BSP)
         rm -rf components/esp32_s3_touch_amoled_2_06
         git clone https://github.com/joaquimorg/esp32_s3_touch_amoled_2_06.git components/esp32_s3_touch_amoled_2_06
-        
-        # Clone the missing UI Framework, explicitly pegged to the working v0.4.2 release!
-        rm -rf esp-brookesia
-        git clone -b v0.4.2 --recursive https://github.com/espressif/esp-brookesia.git esp-brookesia
+
+    - name: Install Python PyYAML
+      run: pip install pyyaml
 
     - name: Remove Outdated Lock File
       run: |
         rm -f dependencies.lock
 
-    - name: Remove Calculator App and Repair Manifests
+    - name: Remove Calculator App and Transition to Registry esp-brookesia
       shell: python
       run: |
         import os
         import re
-
-        workspace = os.environ['GITHUB_WORKSPACE'].replace('\\', '/')
-        win_paths = [
-            'D:/Work/ESP32-S3-Touch-AMOLED',
-            'D:\\Work\\ESP32-S3-Touch-AMOLED'
-        ]
+        import yaml
 
         # 1. Remove the calculator app from C++ source
         main_cpp = 'main.cpp'
@@ -78,55 +72,80 @@ jobs:
                 f.writelines(new_lines)
             print("Removed Calculator from main/idf_component.yml")
 
-        # 3. Smart repair of all component manifests (Windows to Linux path normalization)
+        # 3. Transition from custom brookesia_core to official espressif/esp-brookesia component
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file == 'idf_component.yml':
                     filepath = os.path.join(root, file)
                     with open(filepath, 'r', encoding='utf-8') as f:
-                        lines = f.readlines()
+                        try:
+                            data = yaml.safe_load(f)
+                        except Exception as e:
+                            print(f"Error parsing {filepath}: {e}")
+                            continue
+                    
+                    if not data or 'dependencies' not in data:
+                        continue
                         
-                    new_lines = []
+                    dependencies = data['dependencies']
                     modified = False
                     
-                    for line in lines:
-                        original_line = line
+                    # Identify obsolete brookesia_core references
+                    keys_to_remove = []
+                    for key in list(dependencies.keys()):
+                        if key in ['brookesia_core', 'espressif/brookesia_core']:
+                            keys_to_remove.append(key)
+                    
+                    if keys_to_remove:
+                        for key in keys_to_remove:
+                            dependencies.pop(key)
                         
-                        # Replace hardcoded Windows workspace paths
-                        for wp in win_paths:
-                            if wp in line:
-                                line = line.replace(wp, workspace)
-                                
-                        # Extract the path from override_path or path declarations
-                        match = re.search(r'^\s*(?:override_path|path)\s*:\s*([^#\n]+)', line)
-                        if match:
-                            path_val = match.group(1).strip().strip('"').strip("'")
-                            path_val_norm = path_val.replace('\\', '/')
-                            
-                            if os.path.isabs(path_val_norm):
-                                full_path = path_val_norm
-                            else:
-                                full_path = os.path.abspath(os.path.join(root, path_val_norm))
-                                
-                            # If the path points to a missing directory, drop it entirely to trigger online download
-                            if not os.path.isdir(full_path):
-                                print(f"[{filepath}] Removing broken path: {path_val}")
-                                modified = True
-                                continue
-                            else:
-                                # Normalize backslashes to forward slashes for Linux compatibility
-                                if path_val != path_val_norm:
-                                    line = line.replace(path_val, path_val_norm)
-                                    modified = True
-                        
-                        if line != original_line:
-                            modified = True
-                        new_lines.append(line)
-                        
+                        # Add the clean registry-backed esp-brookesia package
+                        dependencies['espressif/esp-brookesia'] = '0.4.2'
+                        modified = True
+                    
+                    # Clean up other local override paths that are broken
+                    for dep_name, dep_info in list(dependencies.items()):
+                        if isinstance(dep_info, dict):
+                            for path_key in ['path', 'override_path']:
+                                if path_key in dep_info:
+                                    path_val = dep_info[path_key]
+                                    path_val_norm = path_val.replace('\\', '/')
+                                    if os.path.isabs(path_val_norm):
+                                        full_path = path_val_norm
+                                    else:
+                                        full_path = os.path.abspath(os.path.join(root, path_val_norm))
+                                    
+                                    if not os.path.isdir(full_path):
+                                        print(f"[{filepath}] Removing broken {path_key} for {dep_name}: {path_val}")
+                                        dep_info.pop(path_key)
+                                        modified = True
+                                    else:
+                                        if dep_info[path_key] != path_val_norm:
+                                            dep_info[path_key] = path_val_norm
+                                            modified = True
+                    
                     if modified:
                         with open(filepath, 'w', encoding='utf-8') as f:
-                            f.writelines(new_lines)
-                        print(f"Repaired paths in manifest: {filepath}")
+                            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+                        print(f"Transitioned manifest {filepath} to official espressif/esp-brookesia component")
+
+        # 4. Update CMakeLists.txt to require esp-brookesia instead of brookesia_core
+        for root, dirs, files in os.walk('.'):
+            for file in files:
+                if file == 'CMakeLists.txt':
+                    filepath = os.path.join(root, file)
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    original_content = content
+                    content = content.replace('espressif__brookesia_core', 'espressif__esp-brookesia')
+                    content = content.replace('brookesia_core', 'esp-brookesia')
+                    
+                    if content != original_content:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        print(f"Repaired CMakeLists.txt: {filepath}")
 
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
