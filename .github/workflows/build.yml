@@ -13,10 +13,15 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Clone Submodule Manually
+    - name: Clone Dependencies Manually
       run: |
+        # Clone the broken board support package
         rm -rf components/esp32_s3_touch_amoled_2_06
         git clone https://github.com/joaquimorg/esp32_s3_touch_amoled_2_06.git components/esp32_s3_touch_amoled_2_06
+        
+        # Clone the missing UI Framework
+        rm -rf esp-brookesia
+        git clone https://github.com/espressif/esp-brookesia.git esp-brookesia
 
     - name: Remove Outdated Lock File
       run: |
@@ -26,7 +31,6 @@ jobs:
       shell: python
       run: |
         import os
-        import re
 
         manifest_path = 'main/idf_component.yml'
         if os.path.exists(manifest_path):
@@ -36,21 +40,16 @@ jobs:
             new_lines = []
             for line in lines:
                 if 'override_path' in line:
-                    # If this is one of our local apps in components/apps/, make it relative
-                    if 'components/apps/' in line:
-                        new_line = re.sub(
-                            r'override_path:\s*["\']?.*?/components/apps/([^"\']+)["\']?',
-                            r'path: "../components/apps/\1"',
-                            line
-                        )
-                        new_line = re.sub(
-                            r'override_path:\s*["\']?.*?\\components\\apps\\([^"\']+)["\']?',
-                            r'path: "../components/apps/\1"',
-                            new_line
-                        )
-                        new_lines.append(new_line)
+                    normalized = line.replace('\\', '/')
+                    # Map local smartwatch apps to relative paths
+                    if 'components/apps/' in normalized:
+                        app_name = normalized.split('components/apps/')[-1].strip().strip('"').strip("'")
+                        new_lines.append(f'    path: "../components/apps/{app_name}"\n')
+                    # Map the missing UI framework to the newly cloned repository folder
+                    elif 'brookesia_core' in normalized:
+                        new_lines.append('    path: "../esp-brookesia/core/brookesia_core"\n')
+                    # Strip any other absolute paths
                     else:
-                        # Otherwise (e.g. brookesia_core), discard the line so it downloads from the registry
                         pass
                 else:
                     new_lines.append(line)
@@ -58,14 +57,13 @@ jobs:
             with open(manifest_path, 'w') as f:
                 f.writelines(new_lines)
             
-            # Print the output for verification in workflow logs
             with open(manifest_path, 'r') as f:
-                print("Successfully updated main/idf_component.yml:")
+                print("Successfully mapped paths in main/idf_component.yml:")
                 print(f.read())
 
-        # For any other idf_component.yml files in subdirectories, clean out override_path entirely
+        # Clean out absolute paths from internal sub-components
         for root, dirs, files in os.walk('.'):
-            if root == './main' or root == 'main':
+            if root == '.' or './main' in root or 'main' in root:
                 continue
             for file in files:
                 if file == 'idf_component.yml':
@@ -75,7 +73,7 @@ jobs:
                     new_lines = [line for line in lines if 'override_path' not in line]
                     with open(filepath, 'w') as f:
                         f.writelines(new_lines)
-                    print(f"Cleaned override_path from: {filepath}")
+                    print(f"Cleaned absolute paths from: {filepath}")
 
     - name: Build with ESP-IDF
       uses: espressif/esp-idf-ci-action@v1
