@@ -27,20 +27,58 @@ jobs:
       run: |
         rm -f dependencies.lock
 
-    - name: Smart Repair of Component Manifests
+    - name: Remove Calculator App and Repair Manifests
       shell: python
       run: |
         import os
         import re
 
-        # Get the Linux GitHub runner workspace path
         workspace = os.environ['GITHUB_WORKSPACE'].replace('\\', '/')
         win_paths = [
             'D:/Work/ESP32-S3-Touch-AMOLED',
             'D:\\Work\\ESP32-S3-Touch-AMOLED'
         ]
 
-        # Scan every manifest file in the project
+        # 1. Remove the calculator app from C++ source
+        main_cpp = 'main.cpp'
+        if os.path.exists(main_cpp):
+            with open(main_cpp, 'r', encoding='utf-8') as f:
+                cpp_code = f.read()
+            
+            # Remove "Calculator" from the ordered_app_names vector
+            cpp_code = cpp_code.replace('"Calculator", ', '')
+            cpp_code = cpp_code.replace(', "Calculator"', '')
+            cpp_code = cpp_code.replace('"Calculator"', '')
+            
+            with open(main_cpp, 'w', encoding='utf-8') as f:
+                f.write(cpp_code)
+            print("Removed Calculator from main.cpp")
+
+        # 2. Remove the calculator dependency from the main manifest
+        main_manifest = 'main/idf_component.yml'
+        if os.path.exists(main_manifest):
+            with open(main_manifest, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            new_lines = []
+            skip = False
+            for line in lines:
+                if line.strip().startswith('brookesia_app_calculator'):
+                    skip = True
+                    continue
+                if skip:
+                    if line.startswith('  ') or line.strip() == '':
+                        continue
+                    else:
+                        skip = False
+                if not skip:
+                    new_lines.append(line)
+                    
+            with open(main_manifest, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            print("Removed Calculator from main/idf_component.yml")
+
+        # 3. Smart repair of all component manifests (Windows to Linux path normalization)
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file == 'idf_component.yml':
@@ -54,38 +92,44 @@ jobs:
                     for line in lines:
                         original_line = line
                         
-                        # 1. Map the original author's local Windows paths to the workspace
+                        # Replace hardcoded Windows workspace paths
                         for wp in win_paths:
                             if wp in line:
                                 line = line.replace(wp, workspace)
                                 
-                        # 2. Extract any path: or override_path: declarations
+                        # Extract the path from override_path or path declarations
                         match = re.search(r'^\s*(?:override_path|path)\s*:\s*([^#\n]+)', line)
                         if match:
                             path_val = match.group(1).strip().strip('"').strip("'")
+                            path_val_norm = path_val.replace('\\', '/')
                             
-                            # Resolve the absolute path
-                            if os.path.isabs(path_val):
-                                full_path = path_val
+                            if os.path.isabs(path_val_norm):
+                                full_path = path_val_norm
                             else:
-                                full_path = os.path.abspath(os.path.join(root, path_val))
+                                full_path = os.path.abspath(os.path.join(root, path_val_norm))
                                 
-                            # 3. Check if the folder actually exists on the runner
+                            # If the path points to a missing directory, drop it entirely to trigger online download
                             if not os.path.isdir(full_path):
                                 print(f"[{filepath}] Removing broken path: {path_val}")
                                 modified = True
-                                continue  # Drop this line from the new file
+                                continue
                             else:
-                                print(f"[{filepath}] Kept valid path: {path_val}")
+                                # Normalize backslashes to forward slashes for Linux compatibility
+                                if path_val != path_val_norm:
+                                    line = line.replace(path_val, path_val_norm)
+                                    modified = True
                         
                         if line != original_line:
                             modified = True
                         new_lines.append(line)
                         
-                    # Save the cleaned file
                     if modified:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             f.writelines(new_lines)
+                        print(f"Repaired paths in manifest: {filepath}")
+
+    - name: Clean up Calculator Component Directory
+      run: rm -rf components/apps/brookesia_app_calculator
 
     - name: Build with ESP-IDF
       uses: espressif/esp-idf-ci-action@v1
