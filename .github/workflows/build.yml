@@ -100,8 +100,8 @@ jobs:
                         for key in keys_to_remove:
                             dependencies.pop(key)
                         
-                        # Add the clean registry-backed esp-brookesia package
-                        dependencies['espressif/esp-brookesia'] = '0.4.2'
+                        # Add the clean registry-backed esp-brookesia package (version >= 0.5.0 which supports LVGL 9.2)
+                        dependencies['espressif/esp-brookesia'] = '^0.5.0'
                         modified = True
                     
                     # Clean up other local override paths that are broken
