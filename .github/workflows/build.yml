@@ -19,9 +19,9 @@ jobs:
         rm -rf components/esp32_s3_touch_amoled_2_06
         git clone https://github.com/joaquimorg/esp32_s3_touch_amoled_2_06.git components/esp32_s3_touch_amoled_2_06
         
-        # Clone the missing UI Framework (with internal submodules)
+        # Clone the missing UI Framework, explicitly pegged to the working v0.4.2 release!
         rm -rf esp-brookesia
-        git clone --recursive https://github.com/espressif/esp-brookesia.git esp-brookesia
+        git clone -b v0.4.2 --recursive https://github.com/espressif/esp-brookesia.git esp-brookesia
 
     - name: Remove Outdated Lock File
       run: |
