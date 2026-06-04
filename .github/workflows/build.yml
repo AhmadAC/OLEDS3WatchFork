@@ -169,17 +169,117 @@ jobs:
                     f.write(content)
                 print(f"Repaired {bsp_source}")
 
-        # 6. Dynamically patch esp-brookesia mismatched-new-delete bug during CMake execution
+        # 6. Repair obsolete header inclusions in dark/core_data.h
+        for root, dirs, files in os.walk('.'):
+            for file in files:
+                if file.endswith('.h') or file.endswith('.hpp') or file.endswith('.cpp'):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    except UnicodeDecodeError:
+                        continue
+                        
+                    modified = False
+                    if 'systems/base/esp_brookesia_base_context.hpp' in content:
+                        content = content.replace('systems/base/esp_brookesia_base_context.hpp', 'esp_brookesia.hpp')
+                        modified = True
+                    if 'systems/base/esp_brookesia_base_type.hpp' in content:
+                        content = content.replace('systems/base/esp_brookesia_base_type.hpp', 'esp_brookesia.hpp')
+                        modified = True
+                    if 'systems/base/esp_brookesia_base_app.hpp' in content:
+                        content = content.replace('systems/base/esp_brookesia_base_app.hpp', 'esp_brookesia.hpp')
+                        modified = True
+                        
+                    if modified:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        print(f"Fixed legacy include in {filepath}")
+
+        # 7. Dynamically patch esp-brookesia mismatched-new-delete bug and inject backward-compat mappings
         root_cmake = 'CMakeLists.txt'
         if os.path.exists(root_cmake):
             with open(root_cmake, 'r') as f:
                 content = f.read()
             
             if 'mismatched-new-delete' not in content:
-                # The content inside this multiline string must be indented to satisfy the YAML block structure
+                # The content inside this multiline string is correctly indented to satisfy YAML parser formatting
                 injection = """
                 # Run dynamically to fix esp-brookesia memory deallocation bug for GCC 13 after download
                 execute_process(COMMAND sed -i "s/free(anim);/delete anim;/g" ${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-brookesia/src/core/esp_brookesia_lv.hpp ERROR_QUIET)
+
+                # Append standard C++ backward compatibility mappings for esp-brookesia v0.4.x namespace refactoring
+                file(APPEND "${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-brookesia/src/esp_brookesia.hpp" "
+                #ifndef ESP_BROOKESIA_COMPAT_HPP
+                #define ESP_BROOKESIA_COMPAT_HPP
+                namespace esp_brookesia {
+                    namespace systems {
+                        namespace phone {
+                            using App = ::esp_brookesia::ESP_Brookesia_PhoneApp;
+                            using Phone = ::esp_brookesia::ESP_Brookesia_Phone;
+                            using PhoneHome = ::esp_brookesia::ESP_Brookesia_PhoneHome;
+                            using PhoneManager = ::esp_brookesia::ESP_Brookesia_PhoneManager;
+                        }
+                        namespace base {
+                            using App = ::esp_brookesia::ESP_Brookesia_App;
+                            using Context = ::esp_brookesia::ESP_Brookesia_Core;
+                            using Display = ::esp_brookesia::ESP_Brookesia_CoreDisplay;
+                            using Manager = ::esp_brookesia::ESP_Brookesia_CoreManager;
+                        }
+                    }
+                    namespace gui {
+                    }
+                    using AppLauncherIcon = ::esp_brookesia::ESP_Brookesia_AppLauncherIcon;
+                    using AppLauncher = ::esp_brookesia::ESP_Brookesia_AppLauncher;
+                    using RecentsScreenSnapshot = ::esp_brookesia::ESP_Brookesia_RecentsScreenSnapshot;
+                    using RecentsScreen = ::esp_brookesia::ESP_Brookesia_RecentsScreen;
+                    using Gesture = ::esp_brookesia::ESP_Brookesia_Gesture;
+                    using NavigationBar = ::esp_brookesia::ESP_Brookesia_NavigationBar;
+                    using StatusBar = ::esp_brookesia::ESP_Brookesia_StatusBar;
+                    using Display = ::esp_brookesia::ESP_Brookesia_CoreDisplay;
+                    using Manager = ::esp_brookesia::ESP_Brookesia_CoreManager;
+                    using Stylesheet = ::esp_brookesia::ESP_Brookesia_CoreStylesheet;
+                    using LvLock = ::esp_brookesia::ESP_Brookesia_LvLock;
+                    using LvLockGuard = ::esp_brookesia::ESP_Brookesia_LvLockGuard;
+                }
+                #endif
+                ")
+
+                file(APPEND "${CMAKE_SOURCE_DIR}/managed_components/espressif__esp-brookesia/src/core/esp_brookesia_core.hpp" "
+                #ifndef ESP_BROOKESIA_COMPAT_HPP
+                #define ESP_BROOKESIA_COMPAT_HPP
+                namespace esp_brookesia {
+                    namespace systems {
+                        namespace phone {
+                            using App = ::esp_brookesia::ESP_Brookesia_PhoneApp;
+                            using Phone = ::esp_brookesia::ESP_Brookesia_Phone;
+                            using PhoneHome = ::esp_brookesia::ESP_Brookesia_PhoneHome;
+                            using PhoneManager = ::esp_brookesia::ESP_Brookesia_PhoneManager;
+                        }
+                        namespace base {
+                            using App = ::esp_brookesia::ESP_Brookesia_App;
+                            using Context = ::esp_brookesia::ESP_Brookesia_Core;
+                            using Display = ::esp_brookesia::ESP_Brookesia_CoreDisplay;
+                            using Manager = ::esp_brookesia::ESP_Brookesia_CoreManager;
+                        }
+                    }
+                    namespace gui {
+                    }
+                    using AppLauncherIcon = ::esp_brookesia::ESP_Brookesia_AppLauncherIcon;
+                    using AppLauncher = ::esp_brookesia::ESP_Brookesia_AppLauncher;
+                    using RecentsScreenSnapshot = ::esp_brookesia::ESP_Brookesia_RecentsScreenSnapshot;
+                    using RecentsScreen = ::esp_brookesia::ESP_Brookesia_RecentsScreen;
+                    using Gesture = ::esp_brookesia::ESP_Brookesia_Gesture;
+                    using NavigationBar = ::esp_brookesia::ESP_Brookesia_NavigationBar;
+                    using StatusBar = ::esp_brookesia::ESP_Brookesia_StatusBar;
+                    using Display = ::esp_brookesia::ESP_Brookesia_CoreDisplay;
+                    using Manager = ::esp_brookesia::ESP_Brookesia_CoreManager;
+                    using Stylesheet = ::esp_brookesia::ESP_Brookesia_CoreStylesheet;
+                    using LvLock = ::esp_brookesia::ESP_Brookesia_LvLock;
+                    using LvLockGuard = ::esp_brookesia::ESP_Brookesia_LvLockGuard;
+                }
+                #endif
+                ")
 
                 # Also formally suppress the warning as a fallback (limited to CXX compiler so C files do not warn)
                 if(TARGET __idf_espressif__esp-brookesia)
@@ -192,7 +292,7 @@ jobs:
                     f.write(content)
                 print("Injected dynamic patch commands into root CMakeLists.txt")
 
-        # 7. Convert potential LVGL 9 image assets back to LVGL 8 structures (Fixes notifications asset)
+        # 8. Convert potential LVGL 9 image assets back to LVGL 8 structures (Fixes notifications asset)
         for root, dirs, files in os.walk('components/apps'):
             for file in files:
                 if file.endswith('.c') or file.endswith('.h'):
