@@ -15,11 +15,11 @@ jobs:
 
     - name: Clone Dependencies Manually
       run: |
-        # Clone the broken board support package
+        # Clone the required board support package
         rm -rf components/esp32_s3_touch_amoled_2_06
         git clone https://github.com/joaquimorg/esp32_s3_touch_amoled_2_06.git components/esp32_s3_touch_amoled_2_06
         
-        # Clone the missing UI Framework WITH internal submodules!
+        # Clone the missing UI Framework
         rm -rf esp-brookesia
         git clone --recursive https://github.com/espressif/esp-brookesia.git esp-brookesia
 
@@ -27,34 +27,48 @@ jobs:
       run: |
         rm -f dependencies.lock
 
-    - name: Correct Hardcoded Windows Paths
+    - name: Correct Component Manifests
       shell: python
       run: |
         import os
         import glob
 
-        # Get the current Linux runner workspace path
         workspace = os.environ['GITHUB_WORKSPACE'].replace('\\', '/')
         win_path1 = 'D:/Work/ESP32-S3-Touch-AMOLED'
         win_path2 = 'D:\\Work\\ESP32-S3-Touch-AMOLED'
 
-        # Safely find and replace the Windows path in all manifest files
         for filepath in glob.glob('**/idf_component.yml', recursive=True):
-            with open(filepath, 'r', encoding='utf-8') as f:
-                content = f.read()
+            filepath_f = filepath.replace('\\', '/')
             
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                
+            new_lines = []
             modified = False
-            if win_path1 in content:
-                content = content.replace(win_path1, workspace)
-                modified = True
-            if win_path2 in content:
-                content = content.replace(win_path2, workspace)
-                modified = True
+            
+            for line in lines:
+                original_line = line
+                
+                # 1. Replace the original author's absolute Windows paths with the Github workspace path
+                if win_path1 in line or win_path2 in line:
+                    line = line.replace(win_path1, workspace)
+                    line = line.replace(win_path2, workspace)
+                    
+                # 2. Fix broken internal dependencies inside the esp-brookesia framework 
+                # by stripping override_path, forcing it to fetch them from the official registry.
+                if filepath_f.startswith('esp-brookesia/') and 'override_path' in line:
+                    modified = True
+                    continue  # Skip adding this line
+                    
+                if line != original_line:
+                    modified = True
+                    
+                new_lines.append(line)
                 
             if modified:
                 with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                print(f"Fixed absolute Windows path in: {filepath}")
+                    f.writelines(new_lines)
+                print(f"Fixed manifest: {filepath}")
 
     - name: Build with ESP-IDF
       uses: espressif/esp-idf-ci-action@v1
