@@ -19,7 +19,7 @@ jobs:
         rm -rf components/esp32_s3_touch_amoled_2_06
         git clone https://github.com/joaquimorg/esp32_s3_touch_amoled_2_06.git components/esp32_s3_touch_amoled_2_06
         
-        # Clone the missing UI Framework
+        # Clone the missing UI Framework (with internal submodules)
         rm -rf esp-brookesia
         git clone --recursive https://github.com/espressif/esp-brookesia.git esp-brookesia
 
@@ -33,10 +33,14 @@ jobs:
         import os
         import re
 
+        # Get the Linux GitHub runner workspace path
         workspace = os.environ['GITHUB_WORKSPACE'].replace('\\', '/')
-        win_path1 = 'D:/Work/ESP32-S3-Touch-AMOLED'
-        win_path2 = 'D:\\Work\\ESP32-S3-Touch-AMOLED'
+        win_paths = [
+            'D:/Work/ESP32-S3-Touch-AMOLED',
+            'D:\\Work\\ESP32-S3-Touch-AMOLED'
+        ]
 
+        # Scan every manifest file in the project
         for root, dirs, files in os.walk('.'):
             for file in files:
                 if file == 'idf_component.yml':
@@ -50,37 +54,35 @@ jobs:
                     for line in lines:
                         original_line = line
                         
-                        # 1. Map the original author's local Windows paths to the current GitHub runner workspace
-                        if win_path1 in line:
-                            line = line.replace(win_path1, workspace)
-                        if win_path2 in line:
-                            line = line.replace(win_path2, workspace)
-                            
-                        # 2. Validate all override_paths. If a dependency points to a directory that doesn't exist,
-                        # safely remove the override so the ESP-IDF compiler automatically downloads it from the registry.
-                        if 'override_path' in line:
-                            match = re.search(r'override_path\s*:\s*([^#\n]+)', line)
-                            if match:
-                                path_val = match.group(1).strip().strip('"').strip("'")
+                        # 1. Map the original author's local Windows paths to the workspace
+                        for wp in win_paths:
+                            if wp in line:
+                                line = line.replace(wp, workspace)
                                 
-                                # Resolve the absolute path
-                                if os.path.isabs(path_val):
-                                    full_path = path_val
-                                else:
-                                    full_path = os.path.abspath(os.path.join(root, path_val))
-                                    
-                                # Check if the folder actually exists on the runner
-                                if not os.path.isdir(full_path):
-                                    print(f"[{filepath}] Removing broken override_path: {path_val}")
-                                    modified = True
-                                    continue  # Skip adding this line to the new file
-                                else:
-                                    print(f"[{filepath}] Keeping valid override_path: {path_val}")
+                        # 2. Extract any path: or override_path: declarations
+                        match = re.search(r'^\s*(?:override_path|path)\s*:\s*([^#\n]+)', line)
+                        if match:
+                            path_val = match.group(1).strip().strip('"').strip("'")
+                            
+                            # Resolve the absolute path
+                            if os.path.isabs(path_val):
+                                full_path = path_val
+                            else:
+                                full_path = os.path.abspath(os.path.join(root, path_val))
+                                
+                            # 3. Check if the folder actually exists on the runner
+                            if not os.path.isdir(full_path):
+                                print(f"[{filepath}] Removing broken path: {path_val}")
+                                modified = True
+                                continue  # Drop this line from the new file
+                            else:
+                                print(f"[{filepath}] Kept valid path: {path_val}")
                         
                         if line != original_line:
                             modified = True
                         new_lines.append(line)
                         
+                    # Save the cleaned file
                     if modified:
                         with open(filepath, 'w', encoding='utf-8') as f:
                             f.writelines(new_lines)
