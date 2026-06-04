@@ -104,6 +104,15 @@ jobs:
                         dependencies['espressif/esp-brookesia'] = '^0.5.0'
                         modified = True
                     
+                    # Lock espressif/esp_lvgl_port to ~2.2.0 to preserve compatibility with LVGL 9.2
+                    if 'espressif/esp_lvgl_port' in dependencies:
+                        dep_info = dependencies['espressif/esp_lvgl_port']
+                        if isinstance(dep_info, dict):
+                            dep_info['version'] = '~2.2.0'
+                        else:
+                            dependencies['espressif/esp_lvgl_port'] = '~2.2.0'
+                        modified = True
+                        
                     # Clean up other local override paths that are broken
                     for dep_name, dep_info in list(dependencies.items()):
                         if isinstance(dep_info, dict):
