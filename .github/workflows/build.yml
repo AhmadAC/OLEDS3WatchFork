@@ -12,8 +12,12 @@ jobs:
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
+      # We do NOT use submodules: 'recursive' here because the upstream submodule ref is broken
+
+    - name: Clone Submodule Manually
+      run: |
+        rm -rf components/esp32_s3_touch_amoled_2_06
+        git clone https://github.com/joaquimorg/esp32_s3_touch_amoled_2_06.git components/esp32_s3_touch_amoled_2_06
 
     - name: Build with ESP-IDF
       uses: espressif/esp-idf-ci-action@v1
