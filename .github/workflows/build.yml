@@ -173,6 +173,43 @@ jobs:
                     f.write(content)
                 print(f"Repaired board support package source file: {bsp_source}")
 
+        # 6. Fix header include paths for esp-brookesia v0.5.0 restructuring
+        for root, dirs, files in os.walk('.'):
+            for file in files:
+                if file.endswith('.h') or file.endswith('.hpp') or file.endswith('.cpp'):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    except UnicodeDecodeError:
+                        continue
+                    
+                    modified = False
+                    
+                    # Update obsolete base context include to the new core structure
+                    if 'systems/base/esp_brookesia_base_context.hpp' in content:
+                        content = content.replace('systems/base/esp_brookesia_base_context.hpp', 'systems/core/esp_brookesia_core.hpp')
+                        modified = True
+                        
+                    # Update other potential obsolete base headers
+                    if 'systems/base/esp_brookesia_base_type.hpp' in content:
+                        content = content.replace('systems/base/esp_brookesia_base_type.hpp', 'systems/core/esp_brookesia_core_type.hpp')
+                        modified = True
+                        
+                    if 'systems/base/esp_brookesia_base_app.hpp' in content:
+                        content = content.replace('systems/base/esp_brookesia_base_app.hpp', 'systems/core/esp_brookesia_core_app.hpp')
+                        modified = True
+                        
+                    # Update BaseContext class name changes
+                    if 'EspBrookesiaBaseContext' in content:
+                        content = content.replace('EspBrookesiaBaseContext', 'EspBrookesiaCore')
+                        modified = True
+
+                    if modified:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        print(f"Fixed legacy brookesia header includes in {filepath}")
+
     - name: Clean up Calculator Component Directory
       run: rm -rf components/apps/brookesia_app_calculator
 
